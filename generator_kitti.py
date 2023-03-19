@@ -35,6 +35,8 @@ from queue import Queue
 from queue import Empty
 from matplotlib import cm
 
+from generator_classes import Label_Row
+
 try:
     import pygame
     from pygame.locals import KMOD_CTRL
@@ -110,28 +112,73 @@ LIDAR_DATA = os.path.join(OUTPUT_FOLDER, 'velodyne/{0:06}.bin')
 LABEL_DATA = os.path.join(OUTPUT_FOLDER, 'label_2/{0:06}.txt')
 IMAGE_DATA = os.path.join(OUTPUT_FOLDER, 'image_2/{0:06}.png')
 
-#def save_lidar_sample():
-
-#def save_label_sample():
+def save_label_sample(current_frame, label_rows):
+    filename = LABEL_DATA.format(current_frame)
+    with open(filename, 'w') as f:
+        label_str = "\n".join([str(row) for row in label_rows if row])
+        f.write(label_str)
 
 #def save_calib_sample():
-def save_lidar_data(filename, point_cloud):
+
+def save_lidar_sample(current_frame, point_cloud):
     lidar_array = [[point[0], -point[1], point[2], 1.0]
                     for point in point_cloud]
     lidar_array = np.array(lidar_array).astype(np.float32)
+    lidar_array.tofile(LIDAR_DATA.format(current_frame))
 
-    lidar_array.tofile(filename)
-
-
-def save_image_sample(current_frame_num):
-    image_name = IMAGE_DATA.format(current_frame_num)
+def save_image_sample(current_frame, im_array):
+    image = Image.fromarray(im_array)
+    image.save(IMAGE_DATA.format(current_frame))
 
 def sensor_callback(data, queue):
-    """
-    This simple callback just stores the data on a thread safe Python Queue
-    to be retrieved from the "main thread".
-    """
     queue.put(data)
+
+def get_detected_objects(world, measurements):
+    for agent in measurements.non_player_agents:
+        if agent.hasField('vehicle') or agent.hasField('pedestrian'):
+            create_label_row(agent)
+
+def create_label_row(world, agent):
+    agent_type, agent_transform, bbox_transform, extent, location = agent_attributes(world, agent)
+    #truncated = 0.0
+    #occlusion = calculate_occlusion()
+    bbox = get_bbox_coordinates()
+    rotation = 0
+
+    row = Label_Row()
+    row.set_type(agent_type)
+    row.set_bbox(bbox)
+    row.set_dimensions(extent)
+    row.set_location(location, extent.z)
+    row.set_rotation_y(rotation)
+    return row
+    
+
+
+def agent_attributes(world, agent):
+    if agent.hasField('vehicle'):
+        actor = world.get_actors().find(agent.id)
+        if (actor.get_attribute('number_of_wheels') == 2):
+            type = 'Cyclist'
+        else:
+            type = 'Vehicle'
+        agent_transform = agent.vehicle.transform
+        bbox_transform = agent.vehicle.bounding_box.transform
+        ext = agent.vehicle.bounding_box.extent
+        location = agent.vehicle.transform.location
+    elif agent.hasField('pedestrian'):
+        type = 'Pedestrian'
+        agent_transform = agent.pedestrian.transform
+        bbox_transform = agent.pedestrian.bounding_box.transform
+        extent = agent.pedestrian.bounding_box.extent
+        location = agent.pedestrian.transform.location
+    return type, agent_transform, bbox_transform, extent, location
+
+def calculate_occlusion():
+    return 0
+
+def get_bbox_coordinates():
+    return [0,0,0,0]
 
 def generator_loop(args):
     client = carla.Client(args.host, args.port)
@@ -153,22 +200,22 @@ def generator_loop(args):
     lidar = None
 
     try:
+        # Configure blueprints
         blueprints = bp_lib.filter("vehicle.*")
         vehicle_bp = random.choice(blueprints)
         camera_bp = bp_lib.filter("sensor.camera.rgb")[0]
-        lidar_bp = bp_lib.filter("sensor.lidar.ray_cast")[0]
-
-        # Configure the blueprints
+        lidar_bp = bp_lib.filter("sensor.lidar.ray_cast_semantic")[0]
+    
         camera_bp.set_attribute("image_size_x", str(args.width))
         camera_bp.set_attribute("image_size_y", str(args.height))
 
-        lidar_bp.set_attribute('upper_fov', "30.0")
-        lidar_bp.set_attribute('lower_fov', "-25.0")
+        lidar_bp.set_attribute('upper_fov', "7.0")
+        lidar_bp.set_attribute('lower_fov', "-16.0")
         lidar_bp.set_attribute('channels', "64.0")
-        lidar_bp.set_attribute('range', "100.0")
-        lidar_bp.set_attribute('points_per_second', "100000")
+        lidar_bp.set_attribute('range', "120.0")
+        lidar_bp.set_attribute('points_per_second', "1300000")
 
-        # Spawn the blueprints
+        # Spawn blueprints
         vehicle = world.spawn_actor(
             blueprint=vehicle_bp,
             transform=world.get_map().get_spawn_points()[15])
@@ -182,7 +229,7 @@ def generator_loop(args):
             transform=carla.Transform(carla.Location(x=1.0, z=1.8)),
             attach_to=vehicle)
         
-        # The sensor data will be saved in thread-safe Queues
+        # Sensor data
         image_queue = Queue()
         lidar_queue = Queue()
 
@@ -191,30 +238,29 @@ def generator_loop(args):
 
         for frame in range(args.frames):
             world.tick()
-            world_frame = world.get_snapshot().frame
+            time.sleep(10)
+            measurements, sensor_data = client.read_data() 
 
             try:
-                # Get the data once it's received.
+                # Get data when it's received.
                 image_data = image_queue.get(True, 1.0)
                 lidar_data = lidar_queue.get(True, 1.0)
             except Empty:
                 print("[Warning] Some sensor data has been missed")
                 continue
-        
-        im_array = np.copy(np.frombuffer(image_data.raw_data, dtype=np.dtype("uint8")))
-        im_array = np.reshape(im_array, (image_data.height, image_data.width, 4))
-        im_array = im_array[:, :, :3][:, :, ::-1]
 
-        p_cloud_size = len(lidar_data)
-        p_cloud = np.copy(np.frombuffer(lidar_data.raw_data, dtype=np.dtype('f4')))
-        p_cloud = np.reshape(p_cloud, (p_cloud_size, 4))
+            im_array = np.copy(np.frombuffer(image_data.raw_data, dtype=np.dtype("uint8")))
+            im_array = np.reshape(im_array, (image_data.height, image_data.width, 4))
+            im_array = im_array[:, :, :3][:, :, ::-1]
 
-        image = Image.fromarray(im_array)
-        image_frame = 4
-        print(IMAGE_DATA.format(image_frame))
-        image.save(IMAGE_DATA.format(image_frame))
+            p_cloud_size = len(lidar_data)
+            p_cloud = np.copy(np.frombuffer(lidar_data.raw_data, dtype=np.dtype('f4')))
+            p_cloud = np.reshape(p_cloud, (p_cloud_size, 4))
 
-        save_lidar_data(LIDAR_DATA.format(image_frame), p_cloud)
+            detected = get_detected_objects(world, measurements)
+
+            save_image_sample(frame, im_array)
+            save_lidar_sample(frame, p_cloud)
         
     finally:
         # Apply the original settings when exiting.
@@ -252,7 +298,7 @@ def main():
         metavar='N',
         default=10,
         type=int,
-        help='number of frames to record (default: 500)')
+        help='number of frames to record (default: 10)')
     args = argparser.parse_args()
     args.width, args.height = [int(x) for x in args.res.split('x')]
 
