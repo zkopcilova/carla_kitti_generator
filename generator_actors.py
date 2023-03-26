@@ -236,7 +236,7 @@ def main():
         print('spawned %d vehicles and %d walkers, press Ctrl+C to exit.' % (len(vehicles_list), len(walkers_list)))
 
         # Example of how to use Traffic Manager parameters
-        traffic_manager.global_percentage_speed_difference(30.0)
+        traffic_manager.global_percentage_speed_difference(80.0)
 
         while True:
             if synchronous_master:

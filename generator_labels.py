@@ -1,5 +1,5 @@
 # Kitti data generator
-# Classes
+# Label class
 
 # https://github.com/enginBozkurt/carla-training-data - Older Carla version
 # https://github.com/jedeschaud/kitti_carla_simulator - Autopilot, generates different lidar format and no labels
@@ -84,7 +84,7 @@ class Label_Row():
         self.alpha = alpha
 
     def set_bbox(self, bbox):
-        assert len(bbox) == 4
+        assert len(bbox) == 2
         self.bbox = bbox
 
     def set_dimensions(self, carla_extent):
@@ -93,9 +93,9 @@ class Label_Row():
     def set_location(self, carla_location, carla_extent_z):
         # Carla:  X   Y   Z
         # KITTI: -X  -Y   Z
-        x = - carla_location[0]
-        y = - carla_location[1]
-        z = carla_location[2]
+        x = - carla_location.x
+        y = - carla_location.y
+        z = carla_location.z
 
         if self.type == 'Pedestrian':
             y += carla_extent_z
@@ -103,5 +103,9 @@ class Label_Row():
         self.location = "{} {} {}".format(x, y, z)
     
     def set_rotation_y(self, rotation_y: float):
-        assert pi <= rotation_y <= pi
+        print("Rotation: "+str(rotation_y))
+        assert -pi <= rotation_y <= pi
         self.rotation_y = rotation_y
+
+    def row_to_str(self):
+        str = "{} {} {} {} {} {} {} {} {}".format(self.type, self.truncated, self.occluded, self.alpha, self.bbox[0], self.bbox[1], self.dimensions, self.location, self.rotation_y)
