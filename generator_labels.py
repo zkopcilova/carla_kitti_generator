@@ -1,5 +1,5 @@
 # Kitti data generator
-# Label class
+# Label class and function
 
 # https://github.com/enginBozkurt/carla-training-data - Older Carla version
 # https://github.com/jedeschaud/kitti_carla_simulator - Autopilot, generates different lidar format and no labels
@@ -8,7 +8,6 @@
 import glob
 import os
 import sys
-import time
 
 try:
     sys.path.append(glob.glob('../carla/dist/carla-*%d.%d-%s.egg' % (
@@ -19,18 +18,8 @@ except IndexError:
     pass
 
 import carla
-from carla import VehicleLightState as vls
-from carla import ColorConverter as cc
 
-import argparse
-import collections
-import datetime
-import logging
-import math
-import random
-import re
-import weakref
-
+from generator_utils import *
 from math import pi
 
 TYPES = ['Car', 'Van', 'Truck', 'Pedestrian', 'Person_sitting', 'Cyclist', 'Tram','Misc', 'DontCare']
@@ -56,13 +45,20 @@ TYPES = ['Car', 'Van', 'Truck', 'Pedestrian', 'Person_sitting', 'Cyclist', 'Tram
                      detection, needed for p/r curves, higher is better.
 """
 
+"""
+Easy: Min. bounding box height: 40 Px, Max. occlusion level: Fully visible, Max. truncation: 15 %
+Moderate: Min. bounding box height: 25 Px, Max. occlusion level: Partly occluded, Max. truncation: 30 %
+Hard: Min. bounding box height: 25 Px, Max. occlusion level: Difficult to see, Max. truncation: 50 %
+"""
+
+
 class Label_Row():
     def __init__(self, type=None, bbox=None, dimensions=None, location=None, rotation_y=None, extent=None):
         self.type = type
         self.truncated = 0
         self.occluded = 0
-        self.alpha = -10
-        self.bbox = bbox
+        self.alpha = 0
+        self.bbox = []
         self.dimensions = dimensions
         self.location = location
         self.rotation_y = rotation_y
@@ -84,8 +80,11 @@ class Label_Row():
         self.alpha = alpha
 
     def set_bbox(self, bbox):
-        assert len(bbox) == 2
-        self.bbox = bbox
+        assert len(bbox) == 4
+        self.bbox = "{} {} {} {}".format(bbox[0], bbox[1], bbox[2], bbox[3])
+        if (bbox[2] - bbox[0]) < 25:
+            self.set_type('DontCare')
+        self.calculate_truncation(bbox)
 
     def set_dimensions(self, carla_extent):
         self.dimensions = "{} {} {}".format(2*carla_extent.z, 2*carla_extent.x, 2*carla_extent.y)
@@ -103,9 +102,21 @@ class Label_Row():
         self.location = "{} {} {}".format(x, y, z)
     
     def set_rotation_y(self, rotation_y: float):
-        print("Rotation: "+str(rotation_y))
         assert -pi <= rotation_y <= pi
         self.rotation_y = rotation_y
 
     def row_to_str(self):
-        str = "{} {} {} {} {} {} {} {} {}".format(self.type, self.truncated, self.occluded, self.alpha, self.bbox[0], self.bbox[1], self.dimensions, self.location, self.rotation_y)
+        str = "{} {:.2f} {} {} {} {} {} {}".format(self.type, self.truncated, self.occluded, self.alpha, self.bbox, self.dimensions, self.location, self.rotation_y)
+        return str
+    
+    def calculate_truncation(self, bbox):        
+        bbox_area = calculate_area(bbox[2], bbox[0], bbox[3], bbox[1])
+        visible_area = calculate_area(crop_to_range(bbox[2], 0, IMAGE_W),
+                                      crop_to_range(bbox[0], 0, IMAGE_W),
+                                      crop_to_range(bbox[3], 0, IMAGE_H),
+                                      crop_to_range(bbox[1], 0, IMAGE_H))
+        self.set_truncated(1 - visible_area/bbox_area)
+        if self.truncated > 0.5:
+            self.set_type('DontCare')
+    
+    #def calculate_occlusion(self):
