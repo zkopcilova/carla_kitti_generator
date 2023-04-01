@@ -75,9 +75,9 @@ def save_label_sample(current_frame, label_rows):
             label_str += ("\n"+ row.row_to_str())
         f.write(label_str)
 
-def save_calib_sample(current_frame, K):
+def save_calib_sample(current_frame):
     filename = CALIB_DATA.format(current_frame)
-    P0 = K
+    P0 = build_projection_matrix(IMAGE_W, IMAGE_H, FOV)
     P0 = np.column_stack((P0, np.array([0, 0, 0])))
     P0 = np.ravel(P0, order='C')
     R0 = np.identity(3)
@@ -115,7 +115,7 @@ def save_image_sample(current_frame, im_array):
 def sensor_callback(data, queue):
     queue.put(data)
 
-def get_detected_objects(world, camera, K):
+def get_detected_objects(world, camera, depth_image):
     rows = []
     visible_actors =  filter_angle_distance(world.get_actors(), camera)
     for actor in visible_actors:
@@ -123,36 +123,44 @@ def get_detected_objects(world, camera, K):
         if (bp):
             dist = actor.get_transform().location.distance(actor.get_transform().location)
             if (bp[0].has_tag('vehicle') or bp[0].has_tag('pedestrian')) and dist < 50:
-                rows.append(create_label_row(actor, bp[0], camera, K))                   
+                row = create_label_row(actor, bp[0], camera, depth_image)
+                rows.append(row) if row else None            
     return rows
 
-def create_label_row(actor, actor_bp, camera, K):
+def create_label_row(actor, actor_bp, camera, depth_image):
     agent_type, extent, location = agent_attributes(actor, actor_bp)
-    #truncated = 0.0
     #occlusion = calculate_occlusion()
-    bbox = get_2d_bbox(actor, camera, K)  
+    bbox, occlusion = get_2d_bbox(actor, camera, depth_image)
     rotation_actor = actor.get_transform().rotation.yaw
     rotation_camera = camera.get_transform().rotation.yaw
-    rotation = (rotation_camera - rotation_actor) * math.pi / 180
+    rotation = deg_to_rad(rotation_camera - rotation_actor) % pi
 
     row = Label_Row()
     row.set_type(agent_type)
     row.set_bbox(bbox)
+
+    if occlusion == 1 or row.truncated == 1:
+        return None 
+
     row.set_dimensions(extent)
     row.set_location(location, extent.z)
-    if (- pi <= rotation <= pi):
-        row.set_rotation_y(rotation)    
+    row.set_occluded(occlusion)
+    row.set_rotation_y(rotation)   
 
     return row
     
 def agent_attributes(actor, actor_bp):
-    if actor_bp.has_tag('vehicle'):
-        if (actor_bp.get_attribute('number_of_wheels').as_int() == 2):
-            type = 'Cyclist'
-        else:
-            type = 'Car'
-    elif actor_bp.has_tag('pedestrian'):
-        type = 'Pedestrian'
+    if actor_bp.id in VANS:
+        type = 'Van'
+    elif actor_bp.id in TRUCKS:
+        type = 'Truck'
+    elif actor_bp.id == BIKE:
+        type = 'Cyclist'
+    else:
+        if actor_bp.has_tag('vehicle'):
+                type = 'Car'
+        elif actor_bp.has_tag('pedestrian'):
+            type = 'Pedestrian'
     extent = actor.bounding_box.extent
     location = actor.get_location()
 
@@ -170,18 +178,19 @@ def generator_loop(args):
     world = client.get_world()
     bp_lib = world.get_blueprint_library()
 
-    #traffic_manager = client.get_trafficmanager(8000)
-    #traffic_manager.set_synchronous_mode(False)
+    traffic_manager = client.get_trafficmanager(8000)
+    traffic_manager.set_synchronous_mode(False)
 
     original_settings = world.get_settings()
-    #settings = world.get_settings()
-    #settings.synchronous_mode = True
-    #settings.fixed_delta_seconds = 0.05
-    #world.apply_settings(settings)
+    settings = world.get_settings()
+    settings.synchronous_mode = True
+    settings.fixed_delta_seconds = 0.05
+    world.apply_settings(settings)
 
     vehicle = None
     camera = None
     lidar = None
+    depth_camera = None
 
     try:
         # Configure blueprints
@@ -190,9 +199,13 @@ def generator_loop(args):
         vehicle_bp.set_attribute('role_name', 'autopilot')
         camera_bp = bp_lib.filter("sensor.camera.rgb")[0]
         lidar_bp = bp_lib.filter("sensor.lidar.ray_cast")[0]
+        depth_camera_bp = bp_lib.filter("sensor.camera.depth")[0]
     
         camera_bp.set_attribute("image_size_x", str(IMAGE_W))
         camera_bp.set_attribute("image_size_y", str(IMAGE_H))
+
+        depth_camera_bp.set_attribute("image_size_x", str(IMAGE_W))
+        depth_camera_bp.set_attribute("image_size_y", str(IMAGE_H))
 
         lidar_bp.set_attribute('upper_fov', "7.0")
         lidar_bp.set_attribute('lower_fov', "-16.0")
@@ -214,30 +227,35 @@ def generator_loop(args):
             blueprint=lidar_bp,
             transform=carla.Transform(carla.Location(x=1.0, z=1.8)),
             attach_to=vehicle)
-        
-        #spawn_points = world.get_map().get_spawn_points()
-        #destination = random.choice(spawn_points).location
-        #vehicle.set_destination(destination)
+        depth_camera = world.spawn_actor(
+            blueprint=depth_camera_bp,
+            transform=carla.Transform(carla.Location(x=1.6, z=1.6)),
+            attach_to=vehicle)
 
         time.sleep(2)
 
         # Sensor data
         image_queue = Queue()
         lidar_queue = Queue()
+        depth_queue = Queue()
 
         camera.listen(lambda data: sensor_callback(data, image_queue))
         lidar.listen(lambda data: sensor_callback(data, lidar_queue))
+        depth_camera.listen(lambda data: sensor_callback(data, depth_queue))
 
         for frame in range(args.frames):
             cnt = 0
+            detected = []
+
             while cnt < 60:
                 world.tick()
-                world.wait_for_tick()
+                #world.wait_for_tick()
                 cnt += 1
                 try:
                     # Get data when it's received.
-                    image_data = image_queue.get(True, 5.0)
-                    lidar_data = lidar_queue.get(True, 5.0)
+                    image_data = image_queue.get(False)
+                    lidar_data = lidar_queue.get(False)
+                    depth_data = depth_queue.get(False)
                 except Empty:
                     print("[Warning] Some sensor data has been missed")
                     continue
@@ -250,18 +268,12 @@ def generator_loop(args):
             p_cloud = np.copy(np.frombuffer(lidar_data.raw_data, dtype=np.dtype('f4')))
             p_cloud = np.reshape(p_cloud, (p_cloud_size, 4))
 
-            # Get the attributes from the camera
-            fov = camera_bp.get_attribute("fov").as_float()
-
-            # Calculate the camera projection matrix to project from 3D -> 2D
-            K = build_projection_matrix(IMAGE_W, IMAGE_H, fov)
-
-            detected = get_detected_objects(world, camera, K)
+            detected = get_detected_objects(world, camera, depth_data)
 
             save_image_sample(frame, im_array)
             #save_lidar_sample(frame, p_cloud)
             save_label_sample(frame, detected)
-            save_calib_sample(frame, K)
+            save_calib_sample(frame)
 
             
     finally:
@@ -273,6 +285,8 @@ def generator_loop(args):
             camera.destroy()
         if lidar:
             lidar.destroy()
+        if depth_camera:
+            depth_camera.destroy()
         if vehicle:
             vehicle.destroy()
 

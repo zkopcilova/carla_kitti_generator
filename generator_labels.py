@@ -59,6 +59,7 @@ class Label_Row():
         self.occluded = 0
         self.alpha = 0
         self.bbox = []
+        self.bbox_str = ''
         self.dimensions = dimensions
         self.location = location
         self.rotation_y = rotation_y
@@ -71,8 +72,12 @@ class Label_Row():
         assert 0 <= truncated <= 1, "Wrong format. Truncated must be a float between 0 and 1."
         self.truncated = truncated
 
-    def set_occluded(self, occluded: int):
-        assert 0 <= occluded <= 3
+    def set_occluded(self, occlusion: float):
+        occluded = 0
+        if 0.4 < occlusion <= 0.5:
+            occluded = 1
+        elif occlusion > 0.5:
+            occluded = 2
         self.occluded = occluded
 
     def set_alpha(self, alpha: float):
@@ -81,7 +86,8 @@ class Label_Row():
 
     def set_bbox(self, bbox):
         assert len(bbox) == 4
-        self.bbox = "{} {} {} {}".format(bbox[0], bbox[1], bbox[2], bbox[3])
+        self.bbox_str = "{} {} {} {}".format(bbox[0], bbox[1], bbox[2], bbox[3])
+        self.bbox = bbox
         if (bbox[2] - bbox[0]) < 25:
             self.set_type('DontCare')
         self.calculate_truncation(bbox)
@@ -106,7 +112,7 @@ class Label_Row():
         self.rotation_y = rotation_y
 
     def row_to_str(self):
-        str = "{} {:.2f} {} {} {} {} {} {}".format(self.type, self.truncated, self.occluded, self.alpha, self.bbox, self.dimensions, self.location, self.rotation_y)
+        str = "{} {:.2f} {} {} {} {} {} {}".format(self.type, self.truncated, self.occluded, self.alpha, self.bbox_str, self.dimensions, self.location, self.rotation_y)
         return str
     
     def calculate_truncation(self, bbox):        
@@ -118,5 +124,5 @@ class Label_Row():
         self.set_truncated(1 - visible_area/bbox_area)
         if self.truncated > 0.5:
             self.set_type('DontCare')
-    
-    #def calculate_occlusion(self):
+
+

@@ -17,14 +17,21 @@ except IndexError:
     pass
 
 import carla
-from carla import VehicleLightState as vls
-from carla import ColorConverter as cc
+#from carla import VehicleLightState as vls
+#from carla import ColorConverter as cc
+
+from generator_utils import *
 
 try:
     import numpy as np
 except ImportError:
     raise RuntimeError('cannot import numpy, make sure numpy package is installed')
 
+### Use this function to convert depth image (carla.Image) to a depth map in meter
+def extract_depth(depth_img):
+    depth_img.convert(carla.ColorConverter.Depth)
+    depth_meter = np.array(depth_img.raw_data).reshape((depth_img.height,depth_img.width,4))[:,:,0] * 1000 / 255
+    return depth_meter
 
 def build_projection_matrix(w, h, fov):
     focal = w / (2.0 * np.tan(fov * np.pi / 360.0))
@@ -104,17 +111,6 @@ def p3d_to_p2d_bb(p3d_bb):
     p2d_bb = np.array([min_x,min_y,max_x,max_y])
     return p2d_bb
 
-def get_2d_bbox(actor, camera, K):
-    bbox_coord = create_bb_points(actor)
-    world_coord = vehicle_to_world(bbox_coord, actor)
-    sensor_coord = world_to_sensor(world_coord, camera)
-    cords_y_minus_z_x = np.concatenate([sensor_coord[1, :], -sensor_coord[2, :], sensor_coord[0, :]])
-    bbox = np.transpose(np.dot(K, cords_y_minus_z_x))
-    camera_bbox = np.concatenate([bbox[:, 0] / bbox[:, 2], bbox[:, 1] / bbox[:, 2], bbox[:, 2]], axis=1)
-    bbox_2d = p3d_to_p2d_bb(camera_bbox)
-    #print("{} {}".format(bbox_2d[0], bbox_2d[1]))
-    return bbox_2d
-
 
 ### Get numpy 2D array of vehicles' location and rotation from world reference, also locations from sensor reference
 def get_list_transform(vehicles_list, sensor):
@@ -133,19 +129,16 @@ def get_list_transform(vehicles_list, sensor):
     return t_list , transform_s
 
 ### Remove vehicles that are not in the FOV of the sensor
-def filter_angle(vehicles_list, v_transform, v_transform_s, sensor):
-    attr_dict = sensor.attributes
-    VIEW_FOV = float(attr_dict['fov'])
+def filter_angle(vehicles_list, v_transform, v_transform_s):
     v_angle = np.arctan2(v_transform_s[:,1],v_transform_s[:,0]) * 180 / np.pi
-
-    selector = np.array(np.absolute(v_angle) < (int(VIEW_FOV)/2))
+    selector = np.array(np.absolute(v_angle) < (int(FOV)/2))
     vehicles_list_f = [v for v, s in zip(vehicles_list, selector) if s]
     v_transform_f = v_transform[selector[:,0],:]
     v_transform_s_f = v_transform_s[selector[:,0],:]
     return vehicles_list_f , v_transform_f , v_transform_s_f
 
 ### Remove vehicles that have distance > max_dist from the sensor
-def filter_distance(vehicles_list, v_transform, v_transform_s, sensor, max_dist=100):
+def filter_distance(vehicles_list, v_transform, v_transform_s, sensor, max_dist):
     s = sensor.get_transform()
     s_transform = np.array([s.location.x , s.location.y , s.location.z])
     dist2 = np.sum(np.square(v_transform[:,:3] - s_transform), axis=1)
@@ -156,8 +149,28 @@ def filter_distance(vehicles_list, v_transform, v_transform_s, sensor, max_dist=
     return vehicles_list_f , v_transform_f , v_transform_s_f
 
 ### Apply angle and distance filters in one function
-def filter_angle_distance(vehicles_list, sensor, max_dist=100):
+def filter_angle_distance(vehicles_list, sensor, max_dist=150):
     vehicles_transform , vehicles_transform_s = get_list_transform(vehicles_list, sensor)
     vehicles_list , vehicles_transform , vehicles_transform_s = filter_distance(vehicles_list, vehicles_transform, vehicles_transform_s, sensor, max_dist)
-    vehicles_list , vehicles_transform , vehicles_transform_s = filter_angle(vehicles_list, vehicles_transform, vehicles_transform_s, sensor)
+    vehicles_list , vehicles_transform , vehicles_transform_s = filter_angle(vehicles_list, vehicles_transform, vehicles_transform_s)
     return vehicles_list
+
+def get_2d_bbox(actor, camera, depth_image):
+    K = build_projection_matrix(IMAGE_W, IMAGE_H, FOV)
+    bbox_coord = create_bb_points(actor)
+    world_coord = vehicle_to_world(bbox_coord, actor)
+    sensor_coord = world_to_sensor(world_coord, camera)
+    cords_y_minus_z_x = np.concatenate([sensor_coord[1, :], -sensor_coord[2, :], sensor_coord[0, :]])
+    bbox = np.transpose(np.dot(K, cords_y_minus_z_x))
+    camera_bbox = np.concatenate([bbox[:, 0] / bbox[:, 2], bbox[:, 1] / bbox[:, 2], bbox[:, 2]], axis=1)
+    occlusion = calculate_bbox_occlusion(camera_bbox, depth_image)
+    bbox_2d = p3d_to_p2d_bb(camera_bbox)
+    return bbox_2d, occlusion
+
+def calculate_bbox_occlusion(bbox, depth_image):
+    occluded_vertices = 0
+    depth_map = extract_depth(depth_image)
+    for vertex in bbox:
+        if point_is_occluded(vertex[0,0], vertex[0,1], vertex[0,2], depth_map):
+            occluded_vertices += 1
+    return float(occluded_vertices/8)

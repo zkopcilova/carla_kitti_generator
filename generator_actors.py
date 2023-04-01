@@ -100,7 +100,10 @@ def main():
 
         world.apply_settings(settings)
 
+        # Filter out motorcycles - not a Kitti category
         blueprints = get_actor_blueprints(world, "vehicle.*", "All")
+        blueprints = [x for x in blueprints if int(x.get_attribute('number_of_wheels')) == 4]
+
         blueprintsWalkers = get_actor_blueprints(world, "walker.pedestrian.*", "2")
 
         blueprints = sorted(blueprints, key=lambda bp: bp.id)
@@ -126,14 +129,8 @@ def main():
             if i > n_max_v:
                 break
 
-            if i < 25:
+            if i < 30:
                 blueprint = world.get_blueprint_library().find('vehicle.bh.crossbike')
-            elif i < 35:
-                blueprint = world.get_blueprint_library().find('vehicle.harley-davidson.low_rider')
-            elif i < 42:
-                blueprint = world.get_blueprint_library().find('vehicle.yamaha.yzf')
-            elif i < 50:
-                blueprint = world.get_blueprint_library().find('vehicle.kawasaki.ninja')
             else:
                 blueprint = random.choice(blueprints)
             
@@ -218,9 +215,10 @@ def main():
 
         # wait for a tick to ensure client receives the last transform of the walkers we have just created
         if not synchronous_master:
-            world.wait_for_tick()
+            world.wait_for_tick() 
         else:
             world.tick()
+            
 
         # 5. initialize each controller and set target to walk to (list is [controler, actor, controller, actor ...])
         # set how many pedestrians can cross the road
@@ -238,11 +236,19 @@ def main():
         # Example of how to use Traffic Manager parameters
         traffic_manager.global_percentage_speed_difference(80.0)
 
+        cnt = 0
+        while cnt < 100:
+            world.tick()
+            cnt += 1
+
+        print("waiting for tick now")
         while True:
-            if synchronous_master:
-                world.tick()
-            else:
-                world.wait_for_tick()
+            #if synchronous_master:
+             #   world.tick()
+              #  print("ticked")
+            #else:
+            
+            world.wait_for_tick(60.0)
 
     finally:
 
