@@ -111,7 +111,6 @@ def p3d_to_p2d_bb(p3d_bb):
     p2d_bb = np.array([min_x,min_y,max_x,max_y])
     return p2d_bb
 
-
 ### Get numpy 2D array of vehicles' location and rotation from world reference, also locations from sensor reference
 def get_list_transform(vehicles_list, sensor):
     t_list = []
@@ -174,3 +173,13 @@ def calculate_bbox_occlusion(bbox, depth_image):
         if point_is_occluded(vertex[0,0], vertex[0,1], vertex[0,2], depth_map):
             occluded_vertices += 1
     return float(occluded_vertices/8)
+
+def get_observation_angle(vehicle, sensor):
+    v = vehicle.get_transform()
+    transform = np.array([v.location.x , v.location.y , v.location.z, 1])
+    sensor_world_matrix = get_matrix(sensor.get_transform())
+    world_sensor_matrix = np.linalg.inv(sensor_world_matrix)
+    transform_s = np.dot(world_sensor_matrix, transform.T).T
+    v_angle = np.arctan2(transform_s[1,0],transform_s[0,0]) * 180 / np.pi
+    v_angle = deg_to_rad(v_angle)
+    return v_angle

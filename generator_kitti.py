@@ -131,11 +131,13 @@ def create_label_row(actor, actor_bp, camera, depth_image):
     agent_type, extent, location = agent_attributes(actor, actor_bp)
     #occlusion = calculate_occlusion()
     bbox, occlusion = get_2d_bbox(actor, camera, depth_image)
-    rotation_actor = actor.get_transform().rotation.yaw
-    rotation_camera = camera.get_transform().rotation.yaw
-    rotation = deg_to_rad(rotation_camera - rotation_actor) % pi
+    rotation = deg_to_rad(actor.get_transform().rotation.yaw)
+    obs_angle = get_observation_angle(actor, camera)
+    alpha = rotation - obs_angle
+
 
     row = Label_Row()
+    row.set_alpha(alpha)
     row.set_type(agent_type)
     row.set_bbox(bbox)
 
@@ -173,6 +175,7 @@ def get_bbox_coordinates():
     return [0,0,0,0]
 
 def generator_loop(args):
+    starting_frame = args.starting_frame
     client = carla.Client(args.host, args.port)
     client.set_timeout(2.0)
     world = client.get_world()
@@ -216,20 +219,19 @@ def generator_loop(args):
         # Spawn blueprints
         vehicle = world.spawn_actor(
             blueprint=vehicle_bp,
-            transform=world.get_map().get_spawn_points()[15])
+            transform=world.get_map().get_spawn_points()[25])
         vehicle.set_autopilot(True)
-       # traffic_manager.vehicle_percentage_speed_difference(vehicle, -20.0)
         camera = world.spawn_actor(
             blueprint=camera_bp,
-            transform=carla.Transform(carla.Location(x=1.6, z=1.6)),
+            transform=carla.Transform(carla.Location(x=1.3, z=1.65)),
             attach_to=vehicle)
         lidar = world.spawn_actor(
             blueprint=lidar_bp,
-            transform=carla.Transform(carla.Location(x=1.0, z=1.8)),
+            transform=carla.Transform(carla.Location(x=1.0, z=1.73)),
             attach_to=vehicle)
         depth_camera = world.spawn_actor(
             blueprint=depth_camera_bp,
-            transform=carla.Transform(carla.Location(x=1.6, z=1.6)),
+            transform=carla.Transform(carla.Location(x=1.3, z=1.65)),
             attach_to=vehicle)
 
         time.sleep(2)
@@ -244,6 +246,7 @@ def generator_loop(args):
         depth_camera.listen(lambda data: sensor_callback(data, depth_queue))
 
         for frame in range(args.frames):
+            frame_num = starting_frame + frame
             cnt = 0
             detected = []
 
@@ -270,10 +273,10 @@ def generator_loop(args):
 
             detected = get_detected_objects(world, camera, depth_data)
 
-            save_image_sample(frame, im_array)
-            #save_lidar_sample(frame, p_cloud)
-            save_label_sample(frame, detected)
-            save_calib_sample(frame)
+            save_image_sample(frame_num, im_array)
+            save_lidar_sample(frame_num, p_cloud)
+            save_label_sample(frame_num, detected)
+            save_calib_sample(frame_num)
 
             
     finally:
@@ -310,6 +313,12 @@ def main():
         default=10,
         type=int,
         help='number of frames to record (default: 10)')
+    argparser.add_argument(
+        '-s', '--starting_frame',
+        metavar='S',
+        default=0,
+        type=int,
+        help='frame number to begin with (default: 0)')
     args = argparser.parse_args()
 
     try:

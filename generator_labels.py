@@ -81,19 +81,19 @@ class Label_Row():
         self.occluded = occluded
 
     def set_alpha(self, alpha: float):
-        assert -pi <= alpha <= pi
+        #assert -pi <= alpha <= pi
         self.alpha = alpha
 
     def set_bbox(self, bbox):
         assert len(bbox) == 4
-        self.bbox_str = "{} {} {} {}".format(bbox[0], bbox[1], bbox[2], bbox[3])
+        self.bbox_str = "{:.2f} {:.2f} {:.2f} {:.2f}".format(bbox[0], bbox[1], bbox[2], bbox[3])
         self.bbox = bbox
         if (bbox[2] - bbox[0]) < 25:
             self.set_type('DontCare')
         self.calculate_truncation(bbox)
 
     def set_dimensions(self, carla_extent):
-        self.dimensions = "{} {} {}".format(2*carla_extent.z, 2*carla_extent.x, 2*carla_extent.y)
+        self.dimensions = "{:.2f} {:.2f} {:.2f}".format(2*carla_extent.z, 2*carla_extent.x, 2*carla_extent.y)
 
     def set_location(self, carla_location, carla_extent_z):
         # Carla:  X   Y   Z
@@ -105,14 +105,14 @@ class Label_Row():
         if self.type == 'Pedestrian':
             y += carla_extent_z
 
-        self.location = "{} {} {}".format(x, y, z)
+        self.location = "{:.2f} {:.2f} {:.2f}".format(x, y, z)
     
     def set_rotation_y(self, rotation_y: float):
         assert -pi <= rotation_y <= pi
         self.rotation_y = rotation_y
 
     def row_to_str(self):
-        str = "{} {:.2f} {} {} {} {} {} {}".format(self.type, self.truncated, self.occluded, self.alpha, self.bbox_str, self.dimensions, self.location, self.rotation_y)
+        str = "{} {:.2f} {} {:.2f} {} {} {} {:.2f}".format(self.type, self.truncated, self.occluded, self.alpha, self.bbox_str, self.dimensions, self.location, self.rotation_y)
         return str
     
     def calculate_truncation(self, bbox):        

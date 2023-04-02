@@ -81,8 +81,9 @@ def main():
     n_max_v = 130
 
     try:
-        #print(client.get_available_maps())
-        #world = client.get_world()
+        #['/Game/Carla/Maps/Town01', '/Game/Carla/Maps/Town01_Opt', '/Game/Carla/Maps/Town02', '/Game/Carla/Maps/Town02_Opt',
+        # '/Game/Carla/Maps/Town03', '/Game/Carla/Maps/Town03_Opt', '/Game/Carla/Maps/Town04', '/Game/Carla/Maps/Town04_Opt',
+        # '/Game/Carla/Maps/Town05', '/Game/Carla/Maps/Town05_Opt', '/Game/Carla/Maps/Town10HD', '/Game/Carla/Maps/Town10HD_Opt']
         world = client.load_world('/Game/Carla/Maps/Town02')
 
         traffic_manager = client.get_trafficmanager(args.tm_port)
@@ -154,6 +155,9 @@ def main():
                 logging.error(response.error)
             else:
                 vehicles_list.append(response.actor_id)
+
+        for actor in vehicles_list:
+            traffic_manager.update_vehicle_lights(actor, True)
 
         # -------------
         # Spawn Walkers
