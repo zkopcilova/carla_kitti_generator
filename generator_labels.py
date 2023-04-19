@@ -74,9 +74,9 @@ class Label_Row():
 
     def set_occluded(self, occlusion: float):
         occluded = 0
-        if 0.4 < occlusion <= 0.5:
+        if 0.4 < occlusion <= 0.7:
             occluded = 1
-        elif occlusion > 0.5:
+        elif occlusion > 0.7:
             occluded = 2
         self.occluded = occluded
 
@@ -88,7 +88,7 @@ class Label_Row():
         assert len(bbox) == 4
         self.bbox_str = "{:.2f} {:.2f} {:.2f} {:.2f}".format(bbox[0], bbox[1], bbox[2], bbox[3])
         self.bbox = bbox
-        if (bbox[2] - bbox[0]) < 25:
+        if (abs(bbox[3] - bbox[1])) < 25:
             self.set_type('DontCare')
         self.calculate_truncation(bbox)
 

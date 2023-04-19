@@ -32,7 +32,7 @@ import random
 from queue import Queue
 from queue import Empty
 
-from math import pi
+from math import *
 from generator_labels import *
 from generator_bbox import *
 
@@ -75,16 +75,16 @@ def save_label_sample(current_frame, label_rows):
             label_str += ("\n"+ row.row_to_str())
         f.write(label_str)
 
-def save_calib_sample(current_frame):
+def save_calib_sample(current_frame, camera, lidar):
     filename = CALIB_DATA.format(current_frame)
     P0 = build_projection_matrix(IMAGE_W, IMAGE_H, FOV)
     P0 = np.column_stack((P0, np.array([0, 0, 0])))
     P0 = np.ravel(P0, order='C')
     R0 = np.identity(3)
-    TR_velodyne = np.array([[0, -1, 0],
-                            [0, 0, -1],
-                            [1, 0, 0]])
-    # Add translation vector from velo to camera. This is 0 because the position of camera and lidar is equal in our configuration.
+    # Point_Camera = P_cam * R0_rect * Tr_velo_to_cam * Point_Velodyne
+    TR_velodyne = np.array([[0, 1, 0],
+                   [0, 0, -1],
+                   [1, 0, 0]])
     TR_velodyne = np.column_stack((TR_velodyne, np.array([0, 0, 0])))
     TR_imu_to_velo = np.identity(3)
     TR_imu_to_velo = np.column_stack((TR_imu_to_velo, np.array([0, 0, 0])))
@@ -103,7 +103,7 @@ def save_calib_sample(current_frame):
     logging.info("Wrote all calibration matrices to %s", filename)
 
 def save_lidar_sample(current_frame, point_cloud):
-    lidar_array = [[point[0], -point[1], point[2], 1.0]
+    lidar_array = [[point[0], point[1], point[2], 1.0]
                     for point in point_cloud]
     lidar_array = np.array(lidar_array).astype(np.float32)
     lidar_array.tofile(LIDAR_DATA.format(current_frame))
@@ -141,7 +141,7 @@ def create_label_row(actor, actor_bp, camera, depth_image):
     row.set_type(agent_type)
     row.set_bbox(bbox)
 
-    if occlusion == 1 or row.truncated == 1:
+    if occlusion == 1 or row.truncated == 1 or (bbox[3]-bbox[1] < 20):
         return None 
 
     row.set_dimensions(extent)
@@ -167,12 +167,6 @@ def agent_attributes(actor, actor_bp):
     location = actor.get_location()
 
     return type, extent, location
-
-def calculate_occlusion():
-    return 0
-
-def get_bbox_coordinates():
-    return [0,0,0,0]
 
 def generator_loop(args):
     starting_frame = args.starting_frame
@@ -213,25 +207,25 @@ def generator_loop(args):
         lidar_bp.set_attribute('upper_fov', "7.0")
         lidar_bp.set_attribute('lower_fov', "-16.0")
         lidar_bp.set_attribute('channels', "64.0")
-        lidar_bp.set_attribute('range', "120.0")
-        lidar_bp.set_attribute('points_per_second', "100000")
+        lidar_bp.set_attribute('range', "100.0")
+        lidar_bp.set_attribute('points_per_second', "720000")
 
         # Spawn blueprints
         vehicle = world.spawn_actor(
             blueprint=vehicle_bp,
-            transform=world.get_map().get_spawn_points()[25])
+            transform=world.get_map().get_spawn_points()[5])
         vehicle.set_autopilot(True)
         camera = world.spawn_actor(
             blueprint=camera_bp,
-            transform=carla.Transform(carla.Location(x=1.3, z=1.65)),
+            transform=carla.Transform(carla.Location(x=1.3, z=1.6)),
             attach_to=vehicle)
         lidar = world.spawn_actor(
             blueprint=lidar_bp,
-            transform=carla.Transform(carla.Location(x=1.0, z=1.73)),
+            transform=carla.Transform(carla.Location(x=1.0, z=1.6)),
             attach_to=vehicle)
         depth_camera = world.spawn_actor(
             blueprint=depth_camera_bp,
-            transform=carla.Transform(carla.Location(x=1.3, z=1.65)),
+            transform=carla.Transform(carla.Location(x=1.3, z=1.6)),
             attach_to=vehicle)
 
         time.sleep(2)
@@ -252,7 +246,6 @@ def generator_loop(args):
 
             while cnt < 60:
                 world.tick()
-                #world.wait_for_tick()
                 cnt += 1
                 try:
                     # Get data when it's received.
@@ -267,16 +260,48 @@ def generator_loop(args):
             im_array = np.reshape(im_array, (image_data.height, image_data.width, 4))
             im_array = im_array[:, :, :3][:, :, ::-1]
 
+            transform_matrix, rot = lidar_to_world_rot(vehicle, lidar)
+
             p_cloud_size = len(lidar_data)
             p_cloud = np.copy(np.frombuffer(lidar_data.raw_data, dtype=np.dtype('f4')))
             p_cloud = np.reshape(p_cloud, (p_cloud_size, 4))
 
+            #p_cloud = transform_matrix * p_cloud.T
+            #p_cloud = p_cloud.T * rot
+
+            local_lidar_points = np.array(p_cloud[:, :3]).T
+            print(local_lidar_points.shape)
+
+            # Add an extra 1.0 at the end of each 3d point so it becomes of
+            # shape (4, p_cloud_size) and it can be multiplied by a (4, 4) matrix.
+            local_lidar_points = np.r_[
+                local_lidar_points, [np.ones(local_lidar_points.shape[1])]]
+            print(local_lidar_points.shape)
+
+            # This (4, 4) matrix transforms the points from lidar space to world space.
+            lidar_2_world = lidar.get_transform().get_matrix()
+            #print(lidar_2_world.shape)
+
+            # Transform the points from lidar space to world space.
+            world_points = np.dot(lidar_2_world, local_lidar_points)
+            print(world_points.shape)
+
+            # This (4, 4) matrix transforms the points from world to sensor coordinates.
+            world_2_camera = np.array(camera.get_transform().get_inverse_matrix())
+            
+
+            # Transform the points from world space to camera space.
+            sensor_points = np.dot(world_2_camera, world_points)
+            print(sensor_points.shape)
             detected = get_detected_objects(world, camera, depth_data)
+            if detected == []:
+                frame -= 1
+                continue
 
             save_image_sample(frame_num, im_array)
-            save_lidar_sample(frame_num, p_cloud)
+            save_lidar_sample(frame_num, sensor_points.T)
             save_label_sample(frame_num, detected)
-            save_calib_sample(frame_num)
+            save_calib_sample(frame_num, camera, lidar)
 
             
     finally:

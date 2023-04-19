@@ -7,6 +7,7 @@
 import glob
 import os
 import sys
+from math import *
 
 try:
     sys.path.append(glob.glob('../carla/dist/carla-*%d.%d-%s.egg' % (
@@ -183,3 +184,63 @@ def get_observation_angle(vehicle, sensor):
     v_angle = np.arctan2(transform_s[1,0],transform_s[0,0]) * 180 / np.pi
     v_angle = deg_to_rad(v_angle)
     return v_angle
+
+"""
+# Function to change rotations in CARLA from left-handed to right-handed reference frame
+def rotation_carla(rotation):
+    cr = cos(radians(rotation.roll))
+    sr = sin(radians(rotation.roll))
+    cp = cos(radians(rotation.pitch))
+    sp = sin(radians(rotation.pitch))
+    cy = cos(radians(rotation.yaw))
+    sy = sin(radians(rotation.yaw))
+    return np.array([[cy*cp, -cy*sp*sr+sy*cr, -cy*sp*cr-sy*sr],[-sy*cp, sy*sp*sr+cy*cr, sy*sp*cr-cy*sr],[sp, cp*sr, cp*cr]])
+
+def transform_lidar_to_camera(lidar, camera):
+    camera_transform = camera.get_transform()
+    lidar_tranform = lidar.get_transform()
+    R_camera_vehicle = rotation_carla(camera_transform.rotation)
+    R_lidar_vehicle = np.identity(3) #rotation_carla(lidar_tranform.rotation) #we want the lidar frame to have x forward
+    R_lidar_camera = R_camera_vehicle.T.dot(R_lidar_vehicle)
+    T_lidar_camera = R_camera_vehicle.T.dot(translation_carla(
+        np.array([[lidar_tranform.location.x],[lidar_tranform.location.y],[lidar_tranform.location.z]])
+        -np.array([[camera_transform.location.x],[camera_transform.location.y],[camera_transform.location.z]])))
+    return np.vstack((np.hstack((R_lidar_camera, T_lidar_camera)), [0,0,0,1]))
+
+# Function to change translations in CARLA from left-handed to right-handed reference frame
+def translation_carla(location):
+    if isinstance(location, np.ndarray):
+        return location*(np.array([[1],[-1],[1]]))
+    else:
+        return np.array([location.x, -location.y, location.z])
+"""
+#https://github.com/enginBozkurt/carla-training-data/blob/4fe8fc8eba918ef4ef41c657309c974741797e20/datageneration.py#L352
+def lidar_to_world_rot(vehicle, lidar):   
+    transform_matrix =  get_matrix(lidar.get_transform())
+    vehicle_rotation = vehicle.get_transform().rotation
+    pitch = deg_to_rad(vehicle_rotation.pitch)
+    roll = deg_to_rad(vehicle_rotation.roll)
+    yaw = deg_to_rad(vehicle_rotation.yaw)
+    # Rotation matrix for pitch
+    rotP = np.array([[   cos(pitch),       0,  sin(pitch)],
+                        [0,             1,  0],
+                        [-sin(pitch),   0,  cos(pitch)]])
+    # Rotation matrix for roll
+    rotR = np.array([[   1, 0,          0],
+                        [0, cos( roll), -sin(roll)],
+                        [0, sin(roll),  cos(roll)]])
+    rotY = np.array([[   cos(yaw), - sin(yaw),  0],
+                        [sin(yaw), cos(yaw), 0],
+                        [0, 0 , 1]])
+
+    # combined rotation matrix, must be in order roll, pitch, yaw
+    rotRP = np.matmul(rotR, rotP)
+    rot = np.matmul(rotRP, rotY)
+
+    rot = np.c_[rot, [0,0,0]]
+    rot = np.vstack((rot, [0,0,0,1]))
+
+    return transform_matrix, rot
+
+#def lidar_points_to_camera(lidar, camera, p_cloud):
+   

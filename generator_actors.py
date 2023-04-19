@@ -2,6 +2,9 @@ import glob
 import os
 import sys
 import time
+import argparse
+import logging
+from numpy import random
 
 try:
     sys.path.append(glob.glob('../carla/dist/carla-*%d.%d-%s.egg' % (
@@ -12,12 +15,13 @@ except IndexError:
     pass
 
 import carla
-
 from carla import VehicleLightState as vls
 
-import argparse
-import logging
-from numpy import random
+
+# Commands
+SpawnActor = carla.command.SpawnActor
+SetAutopilot = carla.command.SetAutopilot
+FutureActor = carla.command.FutureActor
 
 def get_actor_blueprints(world, filter, generation):
     bps = world.get_blueprint_library().filter(filter)
@@ -25,22 +29,15 @@ def get_actor_blueprints(world, filter, generation):
     if generation.lower() == "all":
         return bps
 
-    # If the filter returns only one bp, we assume that this one needed
-    # and therefore, we ignore the generation
     if len(bps) == 1:
         return bps
 
     try:
         int_generation = int(generation)
-        # Check if generation is in available generations
-        if int_generation in [1, 2]:
-            bps = [x for x in bps if int(x.get_attribute('generation')) == int_generation]
-            return bps
-        else:
-            print("   Warning! Actor Generation is not valid. No actor will be spawned.")
-            return []
+        bps = [x for x in bps if int(x.get_attribute('generation')) == int_generation]
+        return bps
     except:
-        print("   Warning! Actor Generation is not valid. No actor will be spawned.")
+        print("Generation is not valid, no actor will be spawned.")
         return []
 
 def main():
@@ -63,35 +60,58 @@ def main():
         default=8000,
         type=int,
         help='Port to communicate with TM (default: 8000)')
+    argparser.add_argument(
+        '-w','--walkers',
+        default=300,
+        type=int,
+        help='Number of walkers to spawn (default: 300)')
+    argparser.add_argument(
+        '-v','--vehicles',
+        default=15,
+        type=int,
+        help='Number of vehicles to spawn (default: 15)')
+    argparser.add_argument(
+        '-c','--cyclists',
+        default=25,
+        type=int,
+        help='Number of cyclists to spawn (default: 25)')
+    argparser.add_argument(
+        '-t','--town',
+        default=2,
+        type=int,
+        help='Which map to generate - values 1-5 (default: 2)')
 
     args = argparser.parse_args()
 
-    logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
+    #logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
 
     vehicles_list = []
     walkers_list = []
     walkers_controllers = []
+    
     client = carla.Client(args.host, args.port)
     client.set_timeout(10.0)
     synchronous_master = False
     random.seed(int(time.time()))
 
-    n_vehicles = 100
-    n_walkers = 50
-    n_max_v = 130
+    n_vehicles = n_max = args.vehicles + args.cyclists
+    n_cyclists = args.cyclists
+    n_walkers = args.walkers
 
     try:
-        #['/Game/Carla/Maps/Town01', '/Game/Carla/Maps/Town01_Opt', '/Game/Carla/Maps/Town02', '/Game/Carla/Maps/Town02_Opt',
-        # '/Game/Carla/Maps/Town03', '/Game/Carla/Maps/Town03_Opt', '/Game/Carla/Maps/Town04', '/Game/Carla/Maps/Town04_Opt',
-        # '/Game/Carla/Maps/Town05', '/Game/Carla/Maps/Town05_Opt', '/Game/Carla/Maps/Town10HD', '/Game/Carla/Maps/Town10HD_Opt']
-        world = client.load_world('/Game/Carla/Maps/Town02')
+        # --------------
+        # World
+        # --------------
+
+        map = '/Game/Carla/Maps/Town0' + str(args.town)
+        world = client.load_world(map)
+        settings = world.get_settings()
 
         traffic_manager = client.get_trafficmanager(args.tm_port)
         traffic_manager.set_global_distance_to_leading_vehicle(3.0)
-
-        settings = world.get_settings()
-
+        traffic_manager.global_percentage_speed_difference(80.0)
         traffic_manager.set_synchronous_mode(True)
+
         if not settings.synchronous_mode:
             synchronous_master = True
             settings.synchronous_mode = True
@@ -101,7 +121,10 @@ def main():
 
         world.apply_settings(settings)
 
+        # --------------
+        # Get actor blueprints
         # Filter out motorcycles - not a Kitti category
+        # --------------
         blueprints = get_actor_blueprints(world, "vehicle.*", "All")
         blueprints = [x for x in blueprints if int(x.get_attribute('number_of_wheels')) == 4]
 
@@ -115,11 +138,6 @@ def main():
         if n_vehicles > n_spawn_points:
             n_vehicles = n_spawn_points
 
-        # @todo cannot import these directly.
-        SpawnActor = carla.command.SpawnActor
-        SetAutopilot = carla.command.SetAutopilot
-        FutureActor = carla.command.FutureActor
-
         # --------------
         # Spawn vehicles
         # -------------- 
@@ -127,10 +145,9 @@ def main():
         i = 0
 
         for n_vehicles, transform in enumerate(spawn_points):
-            if i > n_max_v:
+            if i >= n_max:
                 break
-
-            if i < 30:
+            if i < n_cyclists:
                 blueprint = world.get_blueprint_library().find('vehicle.bh.crossbike')
             else:
                 blueprint = random.choice(blueprints)
@@ -146,7 +163,6 @@ def main():
 
             blueprint.set_attribute('role_name', 'autopilot')
 
-            # spawn the cars and set their autopilot and light state all together
             batch.append(SpawnActor(blueprint, transform)
                 .then(SetAutopilot(FutureActor, True, traffic_manager.get_port())))
 
@@ -156,17 +172,18 @@ def main():
             else:
                 vehicles_list.append(response.actor_id)
 
-        for actor in vehicles_list:
-            traffic_manager.update_vehicle_lights(actor, True)
+        # turn on lights
+        for vehicle in world.get_actors(vehicles_list):
+            vehicle.set_light_state(vls.LowBeam)
+
 
         # -------------
         # Spawn Walkers
         # -------------
-        # some settings
-        percentageRunning = 0.1      # how many pedestrians will run
-        percentageCrossing = 0.5     # how many pedestrians will walk through the road
+        percentageRunning = 0.1 
+        percentageCrossing = 0.5
 
-        # 1. take all the random locations to spawn
+        # locations to spawn
         spawn_points = []
         for i in range(n_walkers):
             spawn_point = carla.Transform()
@@ -174,15 +191,14 @@ def main():
             if (loc != None):
                 spawn_point.location = loc
                 spawn_points.append(spawn_point)
-        # 2. we spawn the walker object
+
+        # walker object
         batch = []
         walker_speed = []
         for spawn_point in spawn_points:
             walker_bp = random.choice(blueprintsWalkers)
-            # set as not invincible
             if walker_bp.has_attribute('is_invincible'):
                 walker_bp.set_attribute('is_invincible', 'false')
-            # set the max speed
             if walker_bp.has_attribute('speed'):
                 if (random.random() > percentageRunning):
                     # walking
@@ -200,7 +216,8 @@ def main():
                 walkers_list.append({"id": results[i].actor_id})
                 walker_speed2.append(walker_speed[i])
         walker_speed = walker_speed2
-        # 3. we spawn the walker controller
+
+        # walker controller
         batch = []
         walker_controller_bp = world.get_blueprint_library().find('controller.ai.walker')
         for i in range(len(walkers_list)):
@@ -211,35 +228,30 @@ def main():
                 logging.error(results[i].error)
             else:
                 walkers_list[i]["con"] = results[i].actor_id
-        # 4. we put together the walkers and controllers id to get the objects from their id
+
+        # put together the walkers and controllers
         for i in range(len(walkers_list)):
             walkers_controllers.append(walkers_list[i]["con"])
             walkers_controllers.append(walkers_list[i]["id"])
         all_actors = world.get_actors(walkers_controllers)
 
-        # wait for a tick to ensure client receives the last transform of the walkers we have just created
+        # wait for tick to synchronize changes
         if not synchronous_master:
             world.wait_for_tick() 
         else:
             world.tick()
             
-
-        # 5. initialize each controller and set target to walk to (list is [controler, actor, controller, actor ...])
-        # set how many pedestrians can cross the road
+        # set target location and crossing the road
         world.set_pedestrians_cross_factor(percentageCrossing)
         for i in range(0, len(walkers_controllers), 2):
-            # start walker
             all_actors[i].start()
-            # set walk to random point
             all_actors[i].go_to_location(world.get_random_location_from_navigation())
-            # max speed
             all_actors[i].set_max_speed(float(walker_speed[int(i/2)]))
 
+        # print info to user
         print('spawned %d vehicles and %d walkers, press Ctrl+C to exit.' % (len(vehicles_list), len(walkers_list)))
-
-        # Example of how to use Traffic Manager parameters
-        traffic_manager.global_percentage_speed_difference(80.0)
-
+        
+        # move actors out of spawn points
         cnt = 0
         while cnt < 100:
             world.tick()
@@ -247,11 +259,6 @@ def main():
 
         print("waiting for tick now")
         while True:
-            #if synchronous_master:
-             #   world.tick()
-              #  print("ticked")
-            #else:
-            
             world.wait_for_tick(60.0)
 
     finally:
@@ -263,10 +270,10 @@ def main():
             settings.fixed_delta_seconds = None
             world.apply_settings(settings)
 
-
+        # destroy cars and cyclists
         client.apply_batch([carla.command.DestroyActor(x) for x in vehicles_list])
 
-
+        # destroy walkers + controllers
         for i in range(0, len(walkers_controllers), 2):
             all_actors[i].stop()
         client.apply_batch([carla.command.DestroyActor(x) for x in walkers_controllers])
