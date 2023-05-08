@@ -1,5 +1,14 @@
-# Kitti data generator
-# Utils for sensors
+"""
+    Bachelor thesis
+    Topic:        Using synthetic data for improving detection of cyclists and pedestrians in autonomous driving
+    Author:       Zuzana Kopčilová
+    Institution:  Brno University of Technology, Faculty of Information Technology
+    Date:         05/2023
+"""
+
+"""
+    Utility methods and constants for other scripts
+"""
 
 import glob
 import os
@@ -44,28 +53,17 @@ def calculate_area(x_min, x_max, y_min, y_max):
 def deg_to_rad(degrees):
     return degrees * pi / 180
 
-def unit_vector(vector):
-    """ Returns the unit vector of the vector.  """
-    return vector / np.linalg.norm(vector)
-
 def angle_between(v1, v2):
-    """ Returns the angle in radians between vectors 'v1' and 'v2'::
-
-            >>> angle_between((1, 0, 0), (0, 1, 0))
-            1.5707963267948966
-            >>> angle_between((1, 0, 0), (1, 0, 0))
-            0.0
-            >>> angle_between((1, 0, 0), (-1, 0, 0))
-            3.141592653589793
+    """ Returns angle between vectors 'v1' and 'v2' in radians
     """
-    v1_u = unit_vector(v1)
-    v2_u = unit_vector(v2)
+    v1_u = np.linalg.norm(v1)
+    v2_u = np.linalg.norm(v2)
     return np.arccos(np.clip(np.dot(v1_u, v2_u), -1.0, 1.0))
 
     
 def point_is_occluded(vertex_x, vertex_y, vertex_depth, depth_map):
-    """ Checks whether or not the four pixels directly around the given point has less depth than the given vertex depth
-        If True, this means that the point is occluded.
+    """ Checks if the four pixels directly around the given point are closer to camera
+        than the evaluated vertex
     """
     x = int(vertex_x)
     y = int(vertex_y)
@@ -74,10 +72,20 @@ def point_is_occluded(vertex_x, vertex_y, vertex_depth, depth_map):
     for dx, dy in neigbours:
         depth_x = crop_to_range(x+dx, 0, IMAGE_W)
         depth_y = crop_to_range(y+dy, 0, IMAGE_H)
-        # If the depth map says the pixel is closer to the camera than the actual vertex
+
         if depth_map[depth_y, depth_x] < vertex_depth:
             is_occluded.append(True)
         else:
             is_occluded.append(False)
-    # Only say point is occluded if all four neighbours are closer to camera than vertex
+
+    # True if all four neighbours are closer to camera than vertex
     return all(is_occluded)
+
+def angle_limit(a):
+    """ Limits angle to values in range [-pi/2; pi/2] 
+    """
+    while a > pi/2:
+        a -= pi
+    while a < - pi/2:
+        a += pi
+    return a

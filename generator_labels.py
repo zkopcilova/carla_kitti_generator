@@ -1,9 +1,14 @@
-# Kitti data generator
-# Label class and function
+"""
+    Bachelor thesis
+    Topic:        Using synthetic data for improving detection of cyclists and pedestrians in autonomous driving
+    Author:       Zuzana Kopčilová
+    Institution:  Brno University of Technology, Faculty of Information Technology
+    Date:         05/2023
+"""
 
-# https://github.com/enginBozkurt/carla-training-data - Older Carla version
-# https://github.com/jedeschaud/kitti_carla_simulator - Autopilot, generates different lidar format and no labels
-# https://www.cvlibs.net/datasets/kitti/eval_object.php?obj_benchmark=3d - KITTI 3D
+"""
+    Label class with setter and derived value calculation methods
+"""
 
 import glob
 import os
@@ -25,6 +30,10 @@ from math import pi
 TYPES = ['Car', 'Van', 'Truck', 'Pedestrian', 'Person_sitting', 'Cyclist', 'Tram','Misc', 'DontCare']
 
 """
+KITTI label format definition
+
+Source: https://github.com/bostondiditeam/kitti/blob/master/resources/devkit_object/readme.txt
+
 #Values    Name      Description
 ----------------------------------------------------------------------------
    1    type         Describes the type of object: 'Car', 'Van', 'Truck',
@@ -43,9 +52,7 @@ TYPES = ['Car', 'Van', 'Truck', 'Pedestrian', 'Person_sitting', 'Cyclist', 'Tram
    1    rotation_y   Rotation ry around Y-axis in camera coordinates [-pi..pi]
    1    score        Only for results: Float, indicating confidence in
                      detection, needed for p/r curves, higher is better.
-"""
 
-"""
 Easy: Min. bounding box height: 40 Px, Max. occlusion level: Fully visible, Max. truncation: 15 %
 Moderate: Min. bounding box height: 25 Px, Max. occlusion level: Partly occluded, Max. truncation: 30 %
 Hard: Min. bounding box height: 25 Px, Max. occlusion level: Difficult to see, Max. truncation: 50 %
@@ -74,34 +81,45 @@ class Label_Row():
 
     def set_occluded(self, occlusion: float):
         occluded = 0
-        if 0.4 < occlusion <= 0.7:
+        if 0.4 < occlusion <= 0.6:
             occluded = 1
-        elif occlusion > 0.7:
+        elif occlusion > 0.6:
             occluded = 2
         self.occluded = occluded
 
     def set_alpha(self, alpha: float):
-        #assert -pi <= alpha <= pi
-        self.alpha = alpha
-
+        self.alpha = angle_limit(alpha)
+        
     def set_bbox(self, bbox):
         assert len(bbox) == 4
-        self.bbox_str = "{:.2f} {:.2f} {:.2f} {:.2f}".format(bbox[0], bbox[1], bbox[2], bbox[3])
-        self.bbox = bbox
+
+        # Cyclist height must be adjusted, CARLA returns only size of the bike itself
+        if self.type == 'Cyclist':
+            bbox[1] -= 0.35*(bbox[3]-bbox[1])
+
+
         if (abs(bbox[3] - bbox[1])) < 25:
             self.set_type('DontCare')
+
+        self.bbox_str = "{:.2f} {:.2f} {:.2f} {:.2f}".format(bbox[0], bbox[1], bbox[2], bbox[3])
+        self.bbox = bbox
         self.calculate_truncation(bbox)
 
     def set_dimensions(self, carla_extent):
-        self.dimensions = "{:.2f} {:.2f} {:.2f}".format(2*carla_extent.z, 2*carla_extent.x, 2*carla_extent.y)
+        h = 2*carla_extent.z
+        w = 2*carla_extent.x
+        l = 2*carla_extent.y
 
-    def set_location(self, carla_location, carla_extent_z):
-        # Carla:  X   Y   Z
-        # KITTI: -X  -Y   Z
-        x = - carla_location.x
-        y = - carla_location.y
-        z = carla_location.z
+        # Carla returns extent of bicycle, but doesn't include rider height
+        if self.type == 'Cyclist':
+            h *= 1.5
+            w = 2*carla_extent.y
+            l = 2*carla_extent.x
 
+        self.dimensions = "{:.2f} {:.2f} {:.2f}".format(h, w, l)
+
+    def set_location(self, x, y, z, carla_extent_z):
+        # Correct pedestrian location
         if self.type == 'Pedestrian':
             y += carla_extent_z
 
@@ -110,10 +128,6 @@ class Label_Row():
     def set_rotation_y(self, rotation_y: float):
         assert -pi <= rotation_y <= pi
         self.rotation_y = rotation_y
-
-    def row_to_str(self):
-        str = "{} {:.2f} {} {:.2f} {} {} {} {:.2f}".format(self.type, self.truncated, self.occluded, self.alpha, self.bbox_str, self.dimensions, self.location, self.rotation_y)
-        return str
     
     def calculate_truncation(self, bbox):        
         bbox_area = calculate_area(bbox[2], bbox[0], bbox[3], bbox[1])
@@ -125,4 +139,7 @@ class Label_Row():
         if self.truncated > 0.5:
             self.set_type('DontCare')
 
-
+    def row_to_str(self):
+        str = "{} {:.2f} {} {:.2f} {} {} {} {:.2f}".format(self.type, self.truncated, self.occluded, self.alpha, 
+                                                           self.bbox_str, self.dimensions, self.location, self.rotation_y)
+        return str

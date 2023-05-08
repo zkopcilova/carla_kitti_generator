@@ -1,3 +1,19 @@
+"""
+    Bachelor thesis
+    Topic:        Using synthetic data for improving detection of cyclists and pedestrians in autonomous driving
+    Author:       Zuzana Kopčilová
+    Institution:  Brno University of Technology, Faculty of Information Technology
+    Date:         05/2023
+"""
+
+"""
+    Simulator environment setup, spawning actors
+    ----------------------
+    
+    Script is based on tutorial script available with the CARLA simulator:
+    https://github.com/carla-simulator/carla/blob/master/PythonAPI/examples/generate_traffic.py
+"""
+
 import glob
 import os
 import sys
@@ -82,8 +98,6 @@ def main():
         help='Which map to generate - values 1-5 (default: 2)')
 
     args = argparser.parse_args()
-
-    #logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
 
     vehicles_list = []
     walkers_list = []

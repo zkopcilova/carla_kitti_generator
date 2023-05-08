@@ -1,8 +1,21 @@
-# Kitti data generator
-# Functions for bboxes and filtering actors in camera fov
+"""
+    Bachelor thesis
+    Topic:        Using synthetic data for improving detection of cyclists and pedestrians in autonomous driving
+    Author:       Zuzana Kopčilová
+    Institution:  Brno University of Technology, Faculty of Information Technology
+    Date:         05/2023
+"""
 
-#https://carla.readthedocs.io/en/latest/tuto_G_bounding_boxes/ 3D coords to camera coords
-#https://github.com/MukhlasAdib/CARLA-2DBBox/blob/1f126343423eb687f1bf88fbf9961bcb9cdb7c65/carla_vehicle_annotator.py#L159
+"""
+    Utility script for bounding box conversion and object filtering
+"""
+
+""" Script largely uses code that is part of an existing solution 'CARLA Vehicle 2D Bounding Box Annotation Module'
+    combined with information and snippets available in CARLA documentation
+
+    [1] https://github.com/MukhlasAdib/CARLA-2DBBox/tree/1f126343423eb687f1bf88fbf9961bcb9cdb7c65
+    [2] https://carla.readthedocs.io/en/latest/tuto_G_bounding_boxes/
+"""
 
 import glob
 import os
@@ -18,8 +31,6 @@ except IndexError:
     pass
 
 import carla
-#from carla import VehicleLightState as vls
-#from carla import ColorConverter as cc
 
 from generator_utils import *
 
@@ -28,11 +39,6 @@ try:
 except ImportError:
     raise RuntimeError('cannot import numpy, make sure numpy package is installed')
 
-### Use this function to convert depth image (carla.Image) to a depth map in meter
-def extract_depth(depth_img):
-    depth_img.convert(carla.ColorConverter.Depth)
-    depth_meter = np.array(depth_img.raw_data).reshape((depth_img.height,depth_img.width,4))[:,:,0] * 1000 / 255
-    return depth_meter
 
 def build_projection_matrix(w, h, fov):
     focal = w / (2.0 * np.tan(fov * np.pi / 360.0))
@@ -54,6 +60,14 @@ def create_bb_points(vehicle):
     cords[6, :] = np.array([-extent.x, -extent.y, extent.z, 1])
     cords[7, :] = np.array([extent.x, -extent.y, extent.z, 1])
     return cords
+
+""" Beginning of section taken directly from source [1] """
+
+### Use this function to convert depth image (carla.Image) to a depth map in meter
+def extract_depth(depth_img):
+    depth_img.convert(carla.ColorConverter.Depth)
+    depth_meter = np.array(depth_img.raw_data).reshape((depth_img.height,depth_img.width,4))[:,:,0] * 1000 / 255
+    return depth_meter
 
 ### Get transformation matrix from carla.Transform object
 def get_matrix(transform):
@@ -149,12 +163,15 @@ def filter_distance(vehicles_list, v_transform, v_transform_s, sensor, max_dist)
     return vehicles_list_f , v_transform_f , v_transform_s_f
 
 ### Apply angle and distance filters in one function
-def filter_angle_distance(vehicles_list, sensor, max_dist=150):
+def filter_angle_distance(vehicles_list, sensor, max_dist=40):
     vehicles_transform , vehicles_transform_s = get_list_transform(vehicles_list, sensor)
     vehicles_list , vehicles_transform , vehicles_transform_s = filter_distance(vehicles_list, vehicles_transform, vehicles_transform_s, sensor, max_dist)
     vehicles_list , vehicles_transform , vehicles_transform_s = filter_angle(vehicles_list, vehicles_transform, vehicles_transform_s)
     return vehicles_list
 
+""" End of section taken directly from source [1] """
+
+""" Modified code from source [1] """
 def get_2d_bbox(actor, camera, depth_image):
     K = build_projection_matrix(IMAGE_W, IMAGE_H, FOV)
     bbox_coord = create_bb_points(actor)
@@ -166,13 +183,14 @@ def get_2d_bbox(actor, camera, depth_image):
     occlusion = calculate_bbox_occlusion(camera_bbox, depth_image)
     bbox_2d = p3d_to_p2d_bb(camera_bbox)
     return bbox_2d, occlusion
+""" End of modified code """
 
 def calculate_bbox_occlusion(bbox, depth_image):
     occluded_vertices = 0
     depth_map = extract_depth(depth_image)
     for vertex in bbox:
         if point_is_occluded(vertex[0,0], vertex[0,1], vertex[0,2], depth_map):
-            occluded_vertices += 1
+            occluded_vertices += 1 
     return float(occluded_vertices/8)
 
 def get_observation_angle(vehicle, sensor):
@@ -184,63 +202,3 @@ def get_observation_angle(vehicle, sensor):
     v_angle = np.arctan2(transform_s[1,0],transform_s[0,0]) * 180 / np.pi
     v_angle = deg_to_rad(v_angle)
     return v_angle
-
-"""
-# Function to change rotations in CARLA from left-handed to right-handed reference frame
-def rotation_carla(rotation):
-    cr = cos(radians(rotation.roll))
-    sr = sin(radians(rotation.roll))
-    cp = cos(radians(rotation.pitch))
-    sp = sin(radians(rotation.pitch))
-    cy = cos(radians(rotation.yaw))
-    sy = sin(radians(rotation.yaw))
-    return np.array([[cy*cp, -cy*sp*sr+sy*cr, -cy*sp*cr-sy*sr],[-sy*cp, sy*sp*sr+cy*cr, sy*sp*cr-cy*sr],[sp, cp*sr, cp*cr]])
-
-def transform_lidar_to_camera(lidar, camera):
-    camera_transform = camera.get_transform()
-    lidar_tranform = lidar.get_transform()
-    R_camera_vehicle = rotation_carla(camera_transform.rotation)
-    R_lidar_vehicle = np.identity(3) #rotation_carla(lidar_tranform.rotation) #we want the lidar frame to have x forward
-    R_lidar_camera = R_camera_vehicle.T.dot(R_lidar_vehicle)
-    T_lidar_camera = R_camera_vehicle.T.dot(translation_carla(
-        np.array([[lidar_tranform.location.x],[lidar_tranform.location.y],[lidar_tranform.location.z]])
-        -np.array([[camera_transform.location.x],[camera_transform.location.y],[camera_transform.location.z]])))
-    return np.vstack((np.hstack((R_lidar_camera, T_lidar_camera)), [0,0,0,1]))
-
-# Function to change translations in CARLA from left-handed to right-handed reference frame
-def translation_carla(location):
-    if isinstance(location, np.ndarray):
-        return location*(np.array([[1],[-1],[1]]))
-    else:
-        return np.array([location.x, -location.y, location.z])
-"""
-#https://github.com/enginBozkurt/carla-training-data/blob/4fe8fc8eba918ef4ef41c657309c974741797e20/datageneration.py#L352
-def lidar_to_world_rot(vehicle, lidar):   
-    transform_matrix =  get_matrix(lidar.get_transform())
-    vehicle_rotation = vehicle.get_transform().rotation
-    pitch = deg_to_rad(vehicle_rotation.pitch)
-    roll = deg_to_rad(vehicle_rotation.roll)
-    yaw = deg_to_rad(vehicle_rotation.yaw)
-    # Rotation matrix for pitch
-    rotP = np.array([[   cos(pitch),       0,  sin(pitch)],
-                        [0,             1,  0],
-                        [-sin(pitch),   0,  cos(pitch)]])
-    # Rotation matrix for roll
-    rotR = np.array([[   1, 0,          0],
-                        [0, cos( roll), -sin(roll)],
-                        [0, sin(roll),  cos(roll)]])
-    rotY = np.array([[   cos(yaw), - sin(yaw),  0],
-                        [sin(yaw), cos(yaw), 0],
-                        [0, 0 , 1]])
-
-    # combined rotation matrix, must be in order roll, pitch, yaw
-    rotRP = np.matmul(rotR, rotP)
-    rot = np.matmul(rotRP, rotY)
-
-    rot = np.c_[rot, [0,0,0]]
-    rot = np.vstack((rot, [0,0,0,1]))
-
-    return transform_matrix, rot
-
-#def lidar_points_to_camera(lidar, camera, p_cloud):
-   
